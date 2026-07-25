@@ -165,7 +165,32 @@ const AdminDashboard = () => {
       if (!res.ok) return {};
       const rows = await res.json();
       const map = {};
-      rows.forEach(r => { map[r.day] = r.files; });
+
+      for (const r of rows) {
+        if (!r.files || Object.keys(r.files).length === 0) continue;
+        const filesWithUrls = {};
+        for (const key of Object.keys(r.files)) {
+          const f = r.files[key];
+          if (f.path) {
+            // Generate a temporary signed download URL (bucket is private)
+            try {
+              const signRes = await fetch(`${SUPABASE_URL}/storage/v1/object/sign/submissions/${encodeURIComponent(f.path)}`, {
+                method: 'POST',
+                headers: { ...authHeaders() },
+                body: JSON.stringify({ expiresIn: 3600 })
+              });
+              const signData = await signRes.json();
+              filesWithUrls[key] = { ...f, url: signData.signedURL ? `${SUPABASE_URL}/storage/v1${signData.signedURL}` : null };
+            } catch (err) {
+              filesWithUrls[key] = { ...f, url: null };
+            }
+          } else if (f.data) {
+            // Legacy rows that still have old base64 data
+            filesWithUrls[key] = { ...f, url: f.data };
+          }
+        }
+        map[r.day] = filesWithUrls;
+      }
       return map;
     } catch (err) {
       console.error('Error fetching student files:', err);
@@ -490,9 +515,15 @@ const AdminDashboard = () => {
                   {selectedStudentFiles[sub.day] && Object.keys(selectedStudentFiles[sub.day]).length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-2">
                       {Object.values(selectedStudentFiles[sub.day]).map((f, i) => (
-                        <a key={i} href={f.data} download={f.name} className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-lg">
-                          <File className="w-3 h-3" /> {f.name}
-                        </a>
+                        f.url ? (
+                          <a key={i} href={f.url} target="_blank" rel="noopener noreferrer" download={f.name} className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-lg">
+                            <File className="w-3 h-3" /> {f.name}
+                          </a>
+                        ) : (
+                          <span key={i} className="flex items-center gap-1 text-xs bg-gray-50 text-gray-400 px-2 py-1 rounded-lg">
+                            <File className="w-3 h-3" /> {f.name} (unavailable)
+                          </span>
+                        )
                       ))}
                     </div>
                   )}
