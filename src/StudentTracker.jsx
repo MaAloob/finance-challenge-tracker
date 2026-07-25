@@ -124,20 +124,41 @@ const FinanceChallengeTracker = () => {
 
   const insertSubmission = async (payload) => {
     try {
-      // Upsert: if a row already exists for this cohort+email+day, update it instead of creating a duplicate
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions?on_conflict=cohort,email,day`, {
+      // Try UPDATE first — a plain UPDATE only needs the UPDATE policy, avoiding
+      // Postgres's requirement of SELECT privilege for ON CONFLICT conflict-checking.
+      const filter = `cohort=eq.${encodeURIComponent(payload.cohort)}&email=eq.${encodeURIComponent(payload.email)}&day=eq.${payload.day}`;
+      const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?${filter}`, {
+        method: 'PATCH',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+          'Content-Type': 'application/json',
+          'Prefer': 'return=representation'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (patchRes.ok) {
+        const updated = await patchRes.json();
+        if (Array.isArray(updated) && updated.length > 0) {
+          return true; // existing row found and updated
+        }
+      }
+
+      // No existing row matched — insert a new one
+      const postRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'resolution=merge-duplicates,return=minimal'
+          'Prefer': 'return=minimal'
         },
         body: JSON.stringify(payload)
       });
-      return res.ok;
+      return postRes.ok;
     } catch (err) {
-      console.error('Error inserting to Supabase:', err);
+      console.error('Error saving to Supabase:', err);
       return false;
     }
   };
@@ -209,7 +230,7 @@ const FinanceChallengeTracker = () => {
     const day = showSubmissionModal;
     const dayData = phases.flatMap(p => p.days).find(d => d.day === day);
 
-    // Upload each file to Supabase Storage, get back a small public-ish path reference
+    // Upload each file to Supabase Storage, get back a small path reference
     const safeName = userName.replace(/[^a-zA-Z0-9]/g, '_');
     const emailPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
     const folder = `${safeName}_${emailPrefix}`;
@@ -224,7 +245,8 @@ const FinanceChallengeTracker = () => {
           headers: {
             'apikey': SUPABASE_ANON_KEY,
             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': file.type || 'application/octet-stream'
+            'Content-Type': file.type || 'application/octet-stream',
+            'x-upsert': 'true'
           },
           body: file
         });
@@ -490,7 +512,8 @@ const FinanceChallengeTracker = () => {
                         </div>
                         <button onClick={() => removeFile(idx)} className="p-1 hover:bg-pink-200 rounded"><X className="w-4 h-4 text-gray-600" /></button>
                       </div>
-                    )}                  </div>
+                    )}
+                  </div>
                 ))}
               </div>
               <div className="flex gap-3">
