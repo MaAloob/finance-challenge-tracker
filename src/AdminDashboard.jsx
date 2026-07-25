@@ -19,6 +19,8 @@ const AdminDashboard = () => {
   const [newStartDate, setNewStartDate] = useState('');
   const [loading, setLoading] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState(null);
+  const [selectedStudentFiles, setSelectedStudentFiles] = useState({});
+  const [loadingStudentFiles, setLoadingStudentFiles] = useState(false);
   const [savingDate, setSavingDate] = useState(false);
 
   useEffect(() => {
@@ -115,14 +117,16 @@ const AdminDashboard = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      let subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=*&order=created_at.desc`, { headers: authHeaders() });
+      // Exclude the heavy 'files' column here — base64 blobs were causing query timeouts.
+      // Files are fetched separately, only for the specific student being viewed.
+      const lightColumns = 'id,created_at,cohort,user_name,email,day,day_title,completed,submissions,earnings';
+      let subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=${lightColumns}&order=created_at.desc`, { headers: authHeaders() });
       let settingsRes = await fetch(`${SUPABASE_URL}/rest/v1/cohort_settings?select=*`, { headers: authHeaders() });
 
-      // Token expired mid-session — try a silent refresh once, then retry
       if (subsRes.status === 401 || settingsRes.status === 401) {
         const refreshed = await refreshSession();
         if (refreshed) {
-          subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=*&order=created_at.desc`, { headers: authHeaders() });
+          subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=${lightColumns}&order=created_at.desc`, { headers: authHeaders() });
           settingsRes = await fetch(`${SUPABASE_URL}/rest/v1/cohort_settings?select=*`, { headers: authHeaders() });
         }
         if (subsRes.status === 401 || settingsRes.status === 401) {
@@ -130,6 +134,13 @@ const AdminDashboard = () => {
           logout();
           return;
         }
+      }
+
+      if (!subsRes.ok) {
+        console.error('Submissions fetch failed:', subsRes.status, await subsRes.text());
+        setSubmissions([]);
+        setLoading(false);
+        return;
       }
 
       const subs = await subsRes.json();
@@ -145,6 +156,21 @@ const AdminDashboard = () => {
       console.error('Fetch error:', err);
     }
     setLoading(false);
+  };
+
+  // Fetch files only for one student, only when their drill-down is opened
+  const fetchStudentFiles = async (email) => {
+    try {
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&email=eq.${encodeURIComponent(email)}&select=id,day,files`, { headers: authHeaders() });
+      if (!res.ok) return {};
+      const rows = await res.json();
+      const map = {};
+      rows.forEach(r => { map[r.day] = r.files; });
+      return map;
+    } catch (err) {
+      console.error('Error fetching student files:', err);
+      return {};
+    }
   };
 
   const saveStartDate = async () => {
@@ -401,7 +427,13 @@ const AdminDashboard = () => {
                 </thead>
                 <tbody>
                   {leaderboard.map((s, idx) => (
-                    <tr key={s.email} className="border-b border-gray-100 hover:bg-pink-50 cursor-pointer" onClick={() => setSelectedStudent(s.email)}>
+                    <tr key={s.email} className="border-b border-gray-100 hover:bg-pink-50 cursor-pointer" onClick={async () => {
+                      setSelectedStudent(s.email);
+                      setLoadingStudentFiles(true);
+                      const files = await fetchStudentFiles(s.email);
+                      setSelectedStudentFiles(files);
+                      setLoadingStudentFiles(false);
+                    }}>
                       <td className="py-3 pr-4 font-bold text-pink-600">{idx + 1}</td>
                       <td className="py-3 pr-4 font-medium text-gray-900">{s.name}</td>
                       <td className="py-3 pr-4 text-gray-600">{s.email}</td>
@@ -432,10 +464,14 @@ const AdminDashboard = () => {
                 </h3>
                 <p className="text-sm text-gray-500">{selectedStudent}</p>
               </div>
-              <button onClick={() => setSelectedStudent(null)} className="p-2 hover:bg-gray-100 rounded-lg">
+              <button onClick={() => { setSelectedStudent(null); setSelectedStudentFiles({}); }} className="p-2 hover:bg-gray-100 rounded-lg">
                 <X className="w-5 h-5 text-gray-600" />
               </button>
             </div>
+
+            {loadingStudentFiles && (
+              <p className="text-sm text-gray-400 mb-3">Loading attached files...</p>
+            )}
 
             <div className="space-y-4">
               {studentSubmissions(selectedStudent).map((sub) => (
@@ -451,9 +487,9 @@ const AdminDashboard = () => {
                       ))}
                     </ul>
                   )}
-                  {sub.files && Object.keys(sub.files).length > 0 && (
+                  {selectedStudentFiles[sub.day] && Object.keys(selectedStudentFiles[sub.day]).length > 0 && (
                     <div className="flex flex-wrap gap-2 mt-2">
-                      {Object.values(sub.files).map((f, i) => (
+                      {Object.values(selectedStudentFiles[sub.day]).map((f, i) => (
                         <a key={i} href={f.data} download={f.name} className="flex items-center gap-1 text-xs bg-gray-100 hover:bg-gray-200 px-2 py-1 rounded-lg">
                           <File className="w-3 h-3" /> {f.name}
                         </a>
