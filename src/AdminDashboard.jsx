@@ -6,10 +6,12 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 
 const AdminDashboard = () => {
   const [accessToken, setAccessToken] = useState(null);
+  const [refreshToken, setRefreshToken] = useState(null);
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [loggingIn, setLoggingIn] = useState(false);
+  const [sessionExpiredNotice, setSessionExpiredNotice] = useState(false);
 
   const [cohort, setCohort] = useState('cohort_2');
   const [submissions, setSubmissions] = useState([]);
@@ -41,7 +43,10 @@ const AdminDashboard = () => {
       const data = await res.json();
       if (data.access_token) {
         setAccessToken(data.access_token);
+        setRefreshToken(data.refresh_token);
+        setSessionExpiredNotice(false);
         sessionStorage.setItem('admin_token', data.access_token);
+        sessionStorage.setItem('admin_refresh_token', data.refresh_token);
       } else {
         setLoginError(data.error_description || data.msg || 'Invalid login credentials');
       }
@@ -53,12 +58,51 @@ const AdminDashboard = () => {
 
   useEffect(() => {
     const saved = sessionStorage.getItem('admin_token');
+    const savedRefresh = sessionStorage.getItem('admin_refresh_token');
     if (saved) setAccessToken(saved);
+    if (savedRefresh) setRefreshToken(savedRefresh);
   }, []);
+
+  // Proactively refresh the token every 45 minutes so the session never silently expires
+  useEffect(() => {
+    if (!refreshToken) return;
+    const interval = setInterval(() => {
+      refreshSession();
+    }, 45 * 60 * 1000);
+    return () => clearInterval(interval);
+    // eslint-disable-next-line
+  }, [refreshToken]);
+
+  const refreshSession = async () => {
+    if (!refreshToken) return false;
+    try {
+      const res = await fetch(`${SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+        method: 'POST',
+        headers: {
+          'apikey': SUPABASE_ANON_KEY,
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ refresh_token: refreshToken })
+      });
+      const data = await res.json();
+      if (data.access_token) {
+        setAccessToken(data.access_token);
+        setRefreshToken(data.refresh_token);
+        sessionStorage.setItem('admin_token', data.access_token);
+        sessionStorage.setItem('admin_refresh_token', data.refresh_token);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      return false;
+    }
+  };
 
   const logout = () => {
     sessionStorage.removeItem('admin_token');
+    sessionStorage.removeItem('admin_refresh_token');
     setAccessToken(null);
+    setRefreshToken(null);
     setSubmissions([]);
   };
 
@@ -71,14 +115,21 @@ const AdminDashboard = () => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [subsRes, settingsRes] = await Promise.all([
-        fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=*&order=created_at.desc`, { headers: authHeaders() }),
-        fetch(`${SUPABASE_URL}/rest/v1/cohort_settings?select=*`, { headers: authHeaders() })
-      ]);
+      let subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=*&order=created_at.desc`, { headers: authHeaders() });
+      let settingsRes = await fetch(`${SUPABASE_URL}/rest/v1/cohort_settings?select=*`, { headers: authHeaders() });
 
+      // Token expired mid-session — try a silent refresh once, then retry
       if (subsRes.status === 401 || settingsRes.status === 401) {
-        logout();
-        return;
+        const refreshed = await refreshSession();
+        if (refreshed) {
+          subsRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?cohort=eq.${cohort}&select=*&order=created_at.desc`, { headers: authHeaders() });
+          settingsRes = await fetch(`${SUPABASE_URL}/rest/v1/cohort_settings?select=*`, { headers: authHeaders() });
+        }
+        if (subsRes.status === 401 || settingsRes.status === 401) {
+          setSessionExpiredNotice(true);
+          logout();
+          return;
+        }
       }
 
       const subs = await subsRes.json();
@@ -192,6 +243,12 @@ const AdminDashboard = () => {
           <Lock className="w-14 h-14 text-pink-600 mx-auto mb-4" />
           <h1 className="text-2xl font-bold text-gray-900 text-center mb-1">Admin Dashboard</h1>
           <p className="text-sm text-gray-500 text-center mb-6">32-Day Money Challenge</p>
+
+          {sessionExpiredNotice && (
+            <p className="text-sm text-amber-700 bg-amber-50 border border-amber-200 rounded-lg p-2 mb-4 text-center">
+              Your session expired. Please log in again.
+            </p>
+          )}
 
           <div className="space-y-4">
             <div>
