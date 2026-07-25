@@ -124,13 +124,14 @@ const FinanceChallengeTracker = () => {
 
   const insertSubmission = async (payload) => {
     try {
-      const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
+      // Upsert: if a row already exists for this cohort+email+day, update it instead of creating a duplicate
+      const res = await fetch(`${SUPABASE_URL}/rest/v1/submissions?on_conflict=cohort,email,day`, {
         method: 'POST',
         headers: {
           'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'return=minimal'
+          'Prefer': 'resolution=merge-duplicates,return=minimal'
         },
         body: JSON.stringify(payload)
       });
