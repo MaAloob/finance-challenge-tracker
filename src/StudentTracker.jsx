@@ -178,14 +178,11 @@ const FinanceChallengeTracker = () => {
   const isDayUnlocked = (dayNumber) => startDate && dayNumber <= daysUnlocked && daysUnlocked > 0;
 
   const handleFileUpload = (submissionIdx, file) => {
-    const reader = new FileReader();
-    reader.onloadend = () => {
-      setTempFiles({
-        ...tempFiles,
-        [submissionIdx]: { name: file.name, type: file.type, data: reader.result, size: file.size }
-      });
-    };
-    reader.readAsDataURL(file);
+    // Keep the raw File object for upload — no more base64 conversion here.
+    setTempFiles({
+      ...tempFiles,
+      [submissionIdx]: file
+    });
   };
 
   const removeFile = (submissionIdx) => {
@@ -211,6 +208,35 @@ const FinanceChallengeTracker = () => {
     const day = showSubmissionModal;
     const dayData = phases.flatMap(p => p.days).find(d => d.day === day);
 
+    // Upload each file to Supabase Storage, get back a small public-ish path reference
+    const safeName = userName.replace(/[^a-zA-Z0-9]/g, '_');
+    const emailPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
+    const folder = `${safeName}_${emailPrefix}`;
+
+    const uploadedFiles = {};
+    for (const key of Object.keys(tempFiles)) {
+      const file = tempFiles[key];
+      const filePath = `${folder}/day_${day}_${key}_${file.name}`;
+      try {
+        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodeURIComponent(filePath)}`, {
+          method: 'POST',
+          headers: {
+            'apikey': SUPABASE_ANON_KEY,
+            'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
+            'Content-Type': file.type || 'application/octet-stream'
+          },
+          body: file
+        });
+        if (uploadRes.ok) {
+          uploadedFiles[key] = { name: file.name, type: file.type, size: file.size, path: filePath };
+        } else {
+          console.error('File upload failed for', file.name, await uploadRes.text());
+        }
+      } catch (err) {
+        console.error('Upload error:', err);
+      }
+    }
+
     const success = await insertSubmission({
       cohort: COHORT,
       user_name: userName,
@@ -219,16 +245,13 @@ const FinanceChallengeTracker = () => {
       day_title: dayData?.title,
       completed: true,
       submissions: tempSubmissions,
-      files: Object.keys(tempFiles).reduce((acc, key) => {
-        acc[key] = { name: tempFiles[key].name, type: tempFiles[key].type, size: tempFiles[key].size, data: tempFiles[key].data };
-        return acc;
-      }, {}),
+      files: uploadedFiles,
       earnings: earnings
     });
 
     if (success) {
       setSubmissions({ ...submissions, [day]: tempSubmissions });
-      setFileUploads({ ...fileUploads, [day]: tempFiles });
+      setFileUploads({ ...fileUploads, [day]: uploadedFiles });
       if (!completedDays.includes(day)) setCompletedDays([...completedDays, day]);
       setShowSubmissionModal(null);
       setTempSubmissions({});
@@ -466,8 +489,7 @@ const FinanceChallengeTracker = () => {
                         </div>
                         <button onClick={() => removeFile(idx)} className="p-1 hover:bg-pink-200 rounded"><X className="w-4 h-4 text-gray-600" /></button>
                       </div>
-                    )}
-                  </div>
+                    )}                  </div>
                 ))}
               </div>
               <div className="flex gap-3">
