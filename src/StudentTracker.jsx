@@ -133,14 +133,22 @@ const FinanceChallengeTracker = () => {
           'apikey': SUPABASE_ANON_KEY,
           'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
           'Content-Type': 'application/json',
-          'Prefer': 'return=representation'
+          // return=minimal + count=exact: ask Postgres how many rows the
+          // UPDATE touched via the Content-Range header, WITHOUT asking it
+          // to hand the row data back — that hand-back needs a SELECT
+          // policy our anon role doesn't have, and silently reports 0
+          // matches even when the update succeeded (which caused the
+          // fallback INSERT below to collide with the row just updated).
+          'Prefer': 'return=minimal, count=exact'
         },
         body: JSON.stringify(payload)
       });
 
       if (patchRes.ok) {
-        const updated = await patchRes.json();
-        if (Array.isArray(updated) && updated.length > 0) {
+        // Content-Range looks like "0-0/1" (1 row matched) or "*/0" (none).
+        const range = patchRes.headers.get('content-range') || '';
+        const total = range.split('/')[1];
+        if (total && total !== '0') {
           return true; // existing row found and updated
         }
       }
