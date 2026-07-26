@@ -22,6 +22,8 @@ const AdminDashboard = () => {
   const [selectedStudentFiles, setSelectedStudentFiles] = useState({});
   const [loadingStudentFiles, setLoadingStudentFiles] = useState(false);
   const [savingDate, setSavingDate] = useState(false);
+  const [archiving, setArchiving] = useState(false);
+  const [archiveResult, setArchiveResult] = useState(null);
 
   useEffect(() => {
     if (accessToken) {
@@ -227,6 +229,28 @@ const AdminDashboard = () => {
     setSavingDate(false);
   };
 
+  const runArchive = async () => {
+    if (!confirm('This moves every uploaded file from Supabase Storage to GitHub, then DELETES it from Supabase to free up space. Files already archived stay safely in GitHub. Continue?')) return;
+    setArchiving(true);
+    setArchiveResult(null);
+    try {
+      const res = await fetch(`${SUPABASE_URL}/functions/v1/archive-to-github`, {
+        method: 'POST',
+        headers: { ...authHeaders() }
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setArchiveResult({ error: data.error || `Request failed (${res.status})` });
+      } else {
+        setArchiveResult(data);
+        await fetchData();
+      }
+    } catch (err) {
+      setArchiveResult({ error: 'Could not reach the archive function. Check your connection.' });
+    }
+    setArchiving(false);
+  };
+
   // Build leaderboard: group by email
   const leaderboard = React.useMemo(() => {
     const map = {};
@@ -358,6 +382,9 @@ const AdminDashboard = () => {
               <button onClick={exportCSV} className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm font-medium">
                 <Download className="w-4 h-4" /> Export CSV
               </button>
+              <button onClick={runArchive} disabled={archiving} className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg hover:bg-gray-800 text-sm font-medium disabled:opacity-50">
+                <RefreshCw className={`w-4 h-4 ${archiving ? 'animate-spin' : ''}`} /> {archiving ? 'Archiving...' : 'Archive Files to GitHub'}
+              </button>
               <button onClick={logout} className="flex items-center gap-2 px-4 py-2 bg-pink-100 text-pink-700 rounded-lg hover:bg-pink-200 text-sm font-medium border border-pink-300">
                 <LogOut className="w-4 h-4" /> Logout
               </button>
@@ -377,6 +404,28 @@ const AdminDashboard = () => {
             </select>
           </div>
         </div>
+
+        {archiveResult && (
+          <div className={`rounded-2xl shadow-lg p-4 mb-6 border-2 ${archiveResult.error ? 'bg-red-50 border-red-200' : 'bg-pink-50 border-pink-200'}`}>
+            {archiveResult.error ? (
+              <p className="text-sm text-red-700 font-medium">⚠️ {archiveResult.error}</p>
+            ) : (
+              <div className="text-sm text-gray-800">
+                <p className="font-medium mb-1">
+                  ✅ Archived {archiveResult.archived?.length || 0} file(s) to GitHub and removed them from Supabase.
+                </p>
+                {archiveResult.failed?.length > 0 && (
+                  <div className="mt-2 text-red-700">
+                    <p className="font-medium">{archiveResult.failed.length} file(s) failed and were left in Supabase:</p>
+                    <ul className="list-disc pl-5">
+                      {archiveResult.failed.map((f, i) => <li key={i}>{f.path} — {f.error}</li>)}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        )}
 
         {/* Cohort Start Date Control */}
         <div className="bg-white rounded-2xl shadow-lg p-6 mb-6 border border-gray-200">
