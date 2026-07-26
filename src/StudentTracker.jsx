@@ -238,9 +238,13 @@ const FinanceChallengeTracker = () => {
     const uploadedFiles = {};
     for (const key of Object.keys(tempFiles)) {
       const file = tempFiles[key];
-      const filePath = `${folder}/day_${day}_${key}_${file.name}`;
+      const fileNamePart = `day_${day}_${key}_${file.name}`;
+      const filePath = `${folder}/${fileNamePart}`;
+      // Encode each path segment on its own so the '/' between folder and
+      // filename stays a real separator instead of becoming a literal %2F.
+      const encodedPath = `${encodeURIComponent(folder)}/${encodeURIComponent(fileNamePart)}`;
       try {
-        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodeURIComponent(filePath)}`, {
+        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodedPath}`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
