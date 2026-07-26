@@ -124,36 +124,8 @@ const FinanceChallengeTracker = () => {
 
   const insertSubmission = async (payload) => {
     try {
-      // Try UPDATE first — a plain UPDATE only needs the UPDATE policy, avoiding
-      // Postgres's requirement of SELECT privilege for ON CONFLICT conflict-checking.
-      const filter = `cohort=eq.${encodeURIComponent(payload.cohort)}&email=eq.${encodeURIComponent(payload.email)}&day=eq.${payload.day}`;
-      const patchRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions?${filter}`, {
-        method: 'PATCH',
-        headers: {
-          'apikey': SUPABASE_ANON_KEY,
-          'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-          'Content-Type': 'application/json',
-          // return=minimal + count=exact: ask Postgres how many rows the
-          // UPDATE touched via the Content-Range header, WITHOUT asking it
-          // to hand the row data back — that hand-back needs a SELECT
-          // policy our anon role doesn't have, and silently reports 0
-          // matches even when the update succeeded (which caused the
-          // fallback INSERT below to collide with the row just updated).
-          'Prefer': 'return=minimal, count=exact'
-        },
-        body: JSON.stringify(payload)
-      });
-
-      if (patchRes.ok) {
-        // Content-Range looks like "0-0/1" (1 row matched) or "*/0" (none).
-        const range = patchRes.headers.get('content-range') || '';
-        const total = range.split('/')[1];
-        if (total && total !== '0') {
-          return true; // existing row found and updated
-        }
-      }
-
-      // No existing row matched — insert a new one
+      // Every submission is kept as history — simple insert, no update/delete needed.
+      // Display logic elsewhere always picks the most recent row per day.
       const postRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
         method: 'POST',
         headers: {
@@ -246,13 +218,9 @@ const FinanceChallengeTracker = () => {
     const uploadedFiles = {};
     for (const key of Object.keys(tempFiles)) {
       const file = tempFiles[key];
-      const fileNamePart = `day_${day}_${key}_${file.name}`;
-      const filePath = `${folder}/${fileNamePart}`;
-      // Encode each path segment on its own so the '/' between folder and
-      // filename stays a real separator instead of becoming a literal %2F.
-      const encodedPath = `${encodeURIComponent(folder)}/${encodeURIComponent(fileNamePart)}`;
+      const filePath = `${folder}/day_${day}_${key}_${file.name}`;
       try {
-        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodedPath}`, {
+        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodeURIComponent(filePath)}`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
