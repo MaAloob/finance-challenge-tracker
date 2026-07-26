@@ -71,7 +71,6 @@ const FinanceChallengeTracker = () => {
     ]}
   ];
 
-  // Load local progress (device-specific view only — source of truth is Supabase)
   useEffect(() => {
     const saved = localStorage.getItem('challengeProgress_' + COHORT);
     if (saved) {
@@ -124,8 +123,6 @@ const FinanceChallengeTracker = () => {
 
   const insertSubmission = async (payload) => {
     try {
-      // Every submission is kept as history — simple insert, no update/delete needed.
-      // Display logic elsewhere always picks the most recent row per day.
       const postRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
         method: 'POST',
         headers: {
@@ -180,7 +177,6 @@ const FinanceChallengeTracker = () => {
   const isDayUnlocked = (dayNumber) => startDate && dayNumber <= daysUnlocked && daysUnlocked > 0;
 
   const handleFileUpload = (submissionIdx, file) => {
-    // Keep the raw File object for upload — no more base64 conversion here.
     setTempFiles({
       ...tempFiles,
       [submissionIdx]: file
@@ -210,7 +206,6 @@ const FinanceChallengeTracker = () => {
     const day = showSubmissionModal;
     const dayData = phases.flatMap(p => p.days).find(d => d.day === day);
 
-    // Upload each file to Supabase Storage, get back a small path reference
     const safeName = userName.replace(/[^a-zA-Z0-9]/g, '_');
     const emailPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
     const folder = `${safeName}_${emailPrefix}`;
@@ -219,8 +214,9 @@ const FinanceChallengeTracker = () => {
     for (const key of Object.keys(tempFiles)) {
       const file = tempFiles[key];
       const filePath = `${folder}/day_${day}_${key}_${file.name}`;
+      const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
       try {
-        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodeURIComponent(filePath)}`, {
+        const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodedPath}`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
@@ -283,7 +279,6 @@ const FinanceChallengeTracker = () => {
   const totalDays = 32;
   const completionRate = Math.round((completedDays.length / totalDays) * 100);
 
-  // Waiting for admin to set the cohort start date
   if (!loadingSettings && !startDate && !settingsError) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-gray-50 flex items-center justify-center p-4">
