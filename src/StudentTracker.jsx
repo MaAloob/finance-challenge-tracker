@@ -71,6 +71,7 @@ const FinanceChallengeTracker = () => {
     ]}
   ];
 
+  // Load local progress (device-specific view only — source of truth is Supabase)
   useEffect(() => {
     const saved = localStorage.getItem('challengeProgress_' + COHORT);
     if (saved) {
@@ -123,6 +124,12 @@ const FinanceChallengeTracker = () => {
 
   const insertSubmission = async (payload) => {
     try {
+      // Always insert a new row rather than trying to update-in-place.
+      // Every submission is kept (a full history per student/day); whichever
+      // view reads this table (student or admin) should order by
+      // created_at desc and take the first row per (email, day) to show
+      // "most recent submission". A plain INSERT needs only the INSERT
+      // policy — no SELECT/UPDATE privilege dance, no conflict handling.
       const postRes = await fetch(`${SUPABASE_URL}/rest/v1/submissions`, {
         method: 'POST',
         headers: {
@@ -177,6 +184,7 @@ const FinanceChallengeTracker = () => {
   const isDayUnlocked = (dayNumber) => startDate && dayNumber <= daysUnlocked && daysUnlocked > 0;
 
   const handleFileUpload = (submissionIdx, file) => {
+    // Keep the raw File object for upload — no more base64 conversion here.
     setTempFiles({
       ...tempFiles,
       [submissionIdx]: file
@@ -206,6 +214,7 @@ const FinanceChallengeTracker = () => {
     const day = showSubmissionModal;
     const dayData = phases.flatMap(p => p.days).find(d => d.day === day);
 
+    // Upload each file to Supabase Storage, get back a small path reference
     const safeName = userName.replace(/[^a-zA-Z0-9]/g, '_');
     const emailPrefix = email.split('@')[0].replace(/[^a-zA-Z0-9]/g, '_');
     const folder = `${safeName}_${emailPrefix}`;
@@ -213,16 +222,23 @@ const FinanceChallengeTracker = () => {
     const uploadedFiles = {};
     for (const key of Object.keys(tempFiles)) {
       const file = tempFiles[key];
-      const filePath = `${folder}/day_${day}_${key}_${file.name}`;
-      const encodedPath = filePath.split('/').map(encodeURIComponent).join('/');
+      // A timestamp keeps every attempt's filename unique, so this is
+      // always a brand-new object — never an overwrite. Storage's
+      // x-upsert path becomes an UPDATE on a name collision, and there's
+      // no anon UPDATE policy on storage.objects (by design — students
+      // shouldn't be able to overwrite/replace a past submission).
+      const fileNamePart = `day_${day}_${key}_${Date.now()}_${file.name}`;
+      const filePath = `${folder}/${fileNamePart}`;
+      // Encode each path segment on its own so the '/' between folder and
+      // filename stays a real separator instead of becoming a literal %2F.
+      const encodedPath = `${encodeURIComponent(folder)}/${encodeURIComponent(fileNamePart)}`;
       try {
         const uploadRes = await fetch(`${SUPABASE_URL}/storage/v1/object/submissions/${encodedPath}`, {
           method: 'POST',
           headers: {
             'apikey': SUPABASE_ANON_KEY,
             'Authorization': `Bearer ${SUPABASE_ANON_KEY}`,
-            'Content-Type': file.type || 'application/octet-stream',
-            'x-upsert': 'true'
+            'Content-Type': file.type || 'application/octet-stream'
           },
           body: file
         });
@@ -279,6 +295,7 @@ const FinanceChallengeTracker = () => {
   const totalDays = 32;
   const completionRate = Math.round((completedDays.length / totalDays) * 100);
 
+  // Waiting for admin to set the cohort start date
   if (!loadingSettings && !startDate && !settingsError) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-pink-50 via-white to-gray-50 flex items-center justify-center p-4">
